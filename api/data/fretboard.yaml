@@ -1,0 +1,12 @@
+# Ultralytics YOLO-pose dataset config for fretboard keypoints.
+# Keypoint order must match app/analysis/fretboard_model.py KEYPOINTS.
+path: datasets/fretboard
+train: images/train
+val: images/val
+names:
+  0: neck
+kpt_shape: [12, 3]
+# 0 nut_low, 1 nut_high, 2 f3_low, 3 f3_high, 4 f5_low, 5 f5_high,
+# 6 f7_low, 7 f7_high, 8 f9_low, 9 f9_high, 10 f12_low, 11 f12_high
+# A horizontal flip keeps low/high edges (they're across the neck, i.e. vertical), so identity:
+flip_idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]

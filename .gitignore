@@ -1,0 +1,22 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# node / next
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+# local data, recordings, models (downloaded on setup)
+api/data/*
+!api/data/fretboard.yaml
+api/models/
+web/public/mediapipe/
+web/public/models/
+*.onnx
+*.pt
+# misc
+.DS_Store
+.env
+.env.*

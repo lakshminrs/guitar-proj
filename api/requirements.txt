@@ -1,0 +1,23 @@
+# Python 3.12. basic-pitch's own pins conflict with numpy 2, so install it separately:
+#   pip install -r requirements.txt && pip install --no-deps basic-pitch==0.4.0
+# (we run its bundled ONNX model through onnxruntime; no TensorFlow needed)
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+pydantic==2.14.3
+SQLAlchemy==2.1.8
+rq==3.0.0
+redis==8.1.0
+numpy==2.5.4
+scipy==1.18.1
+librosa==1.0.0
+soundfile==0.14.0
+opencv-python-headless==5.0.0.93
+mediapipe==1.2.2
+onnxruntime==1.31.1
+pretty_midi==0.2.11.post0
+mir_eval==0.8.2
+resampy==0.4.3
+anthropic==2.5.0
+pytest==9.2.0
+httpx==0.28.1
