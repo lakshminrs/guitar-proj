@@ -20,3 +20,6 @@ web/public/models/
 .DS_Store
 .env
 .env.*
+api/eval_results/*
+!api/eval_results/baseline-synth40.json
+!api/eval_results/step2-synth40.json

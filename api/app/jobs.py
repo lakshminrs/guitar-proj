@@ -68,7 +68,7 @@ def analyze_session(session_id: str) -> None:
 
         # vision and audio are independent until fusion: run them in parallel
         with ThreadPoolExecutor(max_workers=2) as pool:
-            fa = pool.submit(analyze_audio, wav, [c / 1000 for c in clicks])
+            fa = pool.submit(analyze_audio, wav, [c / 1000 for c in clicks], True, count_in)
             fv = pool.submit(analyze_video, mp4, calibration) if mp4 else None
             audio = fa.result()
             vision = None
@@ -95,7 +95,8 @@ def analyze_session(session_id: str) -> None:
             for ev in res.events:
                 extra = {k: ev.get(k) for k in ("idx", "expected_t_ms", "slot", "beat_label", "expected_direction",
                                                 "observed_direction", "direction_confidence", "direction_sources",
-                                                "timing_ms", "is_offbeat", "is_change", "frame", "missed")}
+                                                "timing_ms", "is_offbeat", "is_change", "frame", "missed",
+                                                "sustain", "rel_sustain", "next_is_change")}
                 db.add(EventRow(session_id=session_id, t_ms=ev["t_ms"], bar=ev["bar"], beat=ev["beat"],
                                 expected_chord=ev["expected_chord"], fingertips_json=ev["fingertips"],
                                 notes_json=ev["notes"], scores_json=ev["scores"], errors_json=ev["errors"],

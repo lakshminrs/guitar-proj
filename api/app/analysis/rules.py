@@ -5,8 +5,8 @@ from collections import defaultdict
 
 from ..theory import CHORDS, FINGER_NAMES, STRING_NAMES, string_to_idx
 from . import geometry as G
+from .params import P
 
-TIMING_ERR_MS = 40.0   # report early/late beyond this
 
 
 def _err(ev: dict, type_: str, severity: float, confidence: float, message: str, draw: list,
@@ -130,7 +130,7 @@ def event_errors(ev: dict, verdict: dict | None, fingers_canon: dict | None) -> 
 
         # wrong chord altogether (chroma backup check)
         best = max(verdict["chroma_all"], key=verdict["chroma_all"].get)
-        if best != chord and verdict["chroma_all"][best] - verdict["chroma_sim"] > 0.12 and verdict["pitch_score"] < 0.5:
+        if best != chord and verdict["chroma_all"][best] - verdict["chroma_sim"] > P.wrong_chord_margin and verdict["pitch_score"] < P.wrong_chord_max_pitch:
             errs.append(_err(ev, "wrong_chord", 0.9, 0.6,
                              f"Bar {ev['bar']}: that sounded like {best}, not {chord}.",
                              [{"kind": "chord", "expected": chord, "observed": best, "style": "error"}],
@@ -155,15 +155,27 @@ def event_errors(ev: dict, verdict: dict | None, fingers_canon: dict | None) -> 
 
     # --- timing ------------------------------------------------------------------
     dt = ev.get("timing_ms")
-    if dt is not None and abs(dt) > TIMING_ERR_MS:
-        sev = min(1.0, 0.3 + (abs(dt) - TIMING_ERR_MS) / 120)
+    if dt is not None and abs(dt) > P.timing_err_ms:
+        sev = min(1.0, 0.3 + (abs(dt) - P.timing_err_ms) / 120)
         errs.append(_err(ev, "late" if dt > 0 else "early", sev, 0.85,
                          f"Bar {ev['bar']}, beat {ev['beat_label']}: {abs(dt):.0f} ms {'late' if dt > 0 else 'early'}.",
                          [{"kind": "timing", "offset_ms": round(dt)}], offset_ms=round(dt)))
 
+    # --- sustain: chord cut short -------------------------------------------------
+    rs = ev.get("rel_sustain")
+    if rs is not None and rs < P.choke_ratio:
+        if ev.get("next_is_change"):
+            msg = (f"Bar {ev['bar']}: you let go of {chord} too early before the change — keep it ringing "
+                   f"until the next strum, then move.")
+        else:
+            msg = (f"Bar {ev['bar']}, beat {ev['beat_label']}: {chord} died out early — keep the fingers pressed "
+                   f"and don't let the strumming hand touch the strings.")
+        errs.append(_err(ev, "choked_chord", 0.4, round(min(0.9, 0.5 + (P.choke_ratio - rs)), 2), msg,
+                         [{"kind": "beat", "style": "error"}], rel_sustain=rs))
+
     # --- strum direction ---------------------------------------------------------
     obs = ev.get("observed_direction")
-    if obs and obs != ev["expected_direction"] and ev.get("direction_confidence", 0) >= 0.45:
+    if obs and obs != ev["expected_direction"] and ev.get("direction_confidence", 0) >= P.direction_min_conf:
         word = {"D": "down", "U": "up"}
         errs.append(_err(ev, "wrong_direction", 0.4, ev["direction_confidence"],
                          f"Bar {ev['bar']}, beat {ev['beat_label']}: expected {_art(word[ev['expected_direction']])}-strum, "
@@ -193,7 +205,7 @@ def aggregate_errors(events: list[dict]) -> list[dict]:
                         "t_ms": changes[0]["t_ms"], "bar": changes[0]["bar"], "beat": 1})
     # up-strums turning into down-strums on the offbeats
     off = [e for e in played if e["is_offbeat"] and e["expected_direction"] == "U" and e.get("observed_direction")
-           and e.get("direction_confidence", 0) >= 0.45]
+           and e.get("direction_confidence", 0) >= P.direction_min_conf]
     if len(off) >= 3:
         bad = [e for e in off if e["observed_direction"] == "D"]
         if len(bad) / len(off) >= 0.4:
@@ -232,7 +244,7 @@ def rank_top(errors: list[dict], aggregates: list[dict], k: int = 3) -> list[dic
         if key[0] in ("early", "late"):
             avg = sum(abs(x.get("offset_ms", 0)) for x in es) / len(es)
             n = len(es)
-            msg = f"{n} strum{'s' if n > 1 else ''} {key[0]} by more than {TIMING_ERR_MS:.0f} ms (avg {avg:.0f} ms)."
+            msg = f"{n} strum{'s' if n > 1 else ''} {key[0]} by more than {P.timing_err_ms:.0f} ms (avg {avg:.0f} ms)."
         elif key[0] == "wrong_direction":
             msg = (f"{len(es)} strums went the wrong direction — e.g. {rep['message']}" if len(es) > 1 else rep["message"])
         elif key[0] == "missed_strum":

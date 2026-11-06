@@ -12,11 +12,11 @@ import numpy as np
 from ..theory import CHORDS, beats_per_bar, expected_events
 from . import geometry as G
 from .audio import AudioAnalysis, verify_chord
+from .params import P
 from .rules import aggregate_errors, event_errors, rank_top
 from .vision import VisionTrack
 
 WEIGHTS = {"fingering": 0.30, "pitch": 0.35, "timing": 0.25, "direction": 0.10}
-GHOST_ENERGY = 0.12   # strums quieter than this (rel. to typical) are ghost notes / mutes
 
 
 @dataclass
@@ -79,6 +79,22 @@ def _match(strums, exp_times: list[float], windows: list[float]) -> dict[int, in
     return m
 
 
+def _relative_sustain(strums, match: dict[int, int], n_exp: int) -> dict[int, float]:
+    """Each matched strum's sustain relative to the player's typical sustain for a similar gap
+    to the next strum. A chord's natural decay depends on the guitar and the gap, so a fixed
+    threshold would flag every long gap on a dead-sounding guitar; comparing against the take
+    itself flags only chords cut short. Only strums followed by a long enough gap are judged,
+    and never the last one (nothing tells us when it should stop)."""
+    cand = {ei: strums[si] for ei, si in match.items()
+            if ei < n_exp - 1 and strums[si].gap >= P.choke_min_gap_s}
+    out = {}
+    for ei, st in cand.items():
+        peers = [o.sustain for oj, o in cand.items() if oj != ei and 0.8 <= o.gap / st.gap <= 1.25]
+        if len(peers) >= 3:
+            out[ei] = round(st.sustain / (float(np.median(peers)) + 1e-9), 3)
+    return out
+
+
 def _beat_label(slot: int, subdiv: int) -> str:
     beat = slot // subdiv + 1
     r = slot % subdiv
@@ -100,7 +116,7 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
 
     # ignore count-in noise and anything far after the end
     t_first, t_last = exp_t[0] - windows[0], exp_t[-1] + 1500
-    strums = [s for s in audio.strums if t_first <= s.t * 1000 <= t_last and s.energy >= GHOST_ENERGY]
+    strums = [s for s in audio.strums if t_first <= s.t * 1000 <= t_last and s.energy >= P.ghost_energy]
     match = _match(strums, exp_t, windows)
     # score-informed recovery: search each unmatched expected window for a quieter strum
     recovered = 0
@@ -111,9 +127,10 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
         if st is not None:
             recovered += 1
     if recovered:
-        strums = [s for s in audio.strums if t_first <= s.t * 1000 <= t_last and s.energy >= GHOST_ENERGY]
+        strums = [s for s in audio.strums if t_first <= s.t * 1000 <= t_last and s.energy >= P.ghost_energy]
         match = _match(strums, exp_t, windows)
 
+    rel_sustain = _relative_sustain(strums, match, len(exp))
     fps = vision.fps if vision else 30.0
     has_grid = bool(vision and any(h is not None for h in vision.H))
     events: list[dict] = []
@@ -131,7 +148,10 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
               "beat": e.beat, "slot": e.slot, "beat_label": _beat_label(e.slot, e.subdiv),
               "expected_chord": e.chord, "prev_chord": prev_chord_of_bar[e.bar],
               "expected_direction": e.direction, "is_offbeat": e.is_offbeat, "is_change": e.is_change,
-              "frame": int(round(t_ms / 1000 * fps)), "missed": st is None}
+              "frame": int(round(t_ms / 1000 * fps)), "missed": st is None,
+              "sustain": None if st is None else round(st.sustain, 3),
+              "rel_sustain": rel_sustain.get(ei),
+              "next_is_change": bool(ei + 1 < len(exp) and exp[ei + 1].is_change)}
         scores: dict[str, float | None] = {k: None for k in WEIGHTS}
         verdict, fingers_canon, fingers_img = None, None, {}
 

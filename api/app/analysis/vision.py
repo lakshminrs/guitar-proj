@@ -23,6 +23,7 @@ from scipy.signal import savgol_filter
 
 from . import geometry as G
 from .fretboard_model import FretboardDetector
+from .params import P
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class VisionTrack:
             return None, 0.0, 0.0
         v = (seg[-1] - seg[0]) / ((len(seg) - 1) / self.fps)
         speed = abs(v)
-        if speed < 0.6:  # too slow: likely a ghost/mute or tracking loss
+        if speed < P.video_min_speed:  # too slow: likely a ghost/mute or tracking loss
             return None, 0.0, float(speed)
         # canonical y grows from low E to high E: a down-strum moves toward high E
         return ("D" if v > 0 else "U"), float(min(1.0, speed / 3.0)), float(speed)

@@ -19,24 +19,17 @@ import soundfile as sf
 from scipy import signal
 
 from ..theory import CHORDS, OPEN_MIDI, chord_chroma
+from .params import P
 
 log = logging.getLogger(__name__)
 
 SR = 44100
 CLICK_HZ = 3000.0          # metronome click frequency; above the guitar's fundamental range
-MERGE_WINDOW_S = 0.050     # onsets this close belong to one strum (spread is 10-40 ms)
 BP_MIDI_OFFSET = 21        # basic-pitch pitch bin 0 = MIDI 21 (A0)
 HOP = 256
-
-PRESENT_THR = 0.30         # basic-pitch note activation => "sounded"
-ABSENT_THR = 0.15          # below this => clearly absent
-GLOBAL_DELTA = 0.30        # onset threshold (env normalized to the 95th pct of its peaks)
-RECOVER_MIN = 0.12         # minimum peak for a score-informed (recovered) strum
-
-# The flux peak lands mid-strum (a strum spreads its string attacks over 10-40 ms) and the
-# analysis frame adds latency; subtract a constant to approximate the first attack.
-# Tune against the labelled eval set (scripts/eval.py) for real recordings.
-STRUM_TIME_BIAS_S = float(os.environ.get("STRUM_TIME_BIAS_MS", "13")) / 1000
+# Thresholds live in params.py (P.*). Note P.strum_time_bias_s: the flux peak lands mid-strum
+# (a strum spreads its string attacks over 10-40 ms) and the analysis frame adds latency, so a
+# constant is subtracted to approximate the first attack.
 
 UPSTRUM_STRINGS = (2, 3, 4, 5)  # array idx: D, G, B, high E -- up-strums rarely reach the bass
 
@@ -52,6 +45,10 @@ class Strum:
     chroma: list[float] = field(default_factory=list)
     energy: float = 0.0          # RMS of the first 120 ms, relative to the take's typical strum
     rise: float = 1.0            # RMS(after 60 ms) / RMS(before 60 ms): a real attack is > ~1.5
+    gap: float = 0.0             # seconds to the next strum
+    sustain: float = 1.0         # RMS of the last 80 ms before the next strum / attack RMS
+    attack: dict[int, float] = field(default_factory=dict)     # midi -> basic-pitch onset activation
+    cqt_rise: dict[int, float] = field(default_factory=dict)   # midi -> dB rise vs just before the strum
     direction: tuple[str | None, float] = (None, 0.0)
 
 
@@ -85,18 +82,32 @@ def preprocess(y: np.ndarray, sr: int, click_hz: float = CLICK_HZ) -> np.ndarray
 # ---------------------------------------------------------------------------
 
 def measure_click_offset(y: np.ndarray, sr: int, clicks_s: list[float],
-                         click_hz: float = CLICK_HZ) -> float | None:
+                         click_hz: float = CLICK_HZ, count_in: int | None = None) -> float | None:
     """If the click is audible in the mic, find each logged click in the audio and return the
     median (audio - logged) offset in ms. Returns None when the click isn't reliably found
-    (e.g. headphones). This calibrates away browser output/input latency."""
+    (e.g. headphones). This calibrates away browser output/input latency.
+
+    With `count_in`, only the count-in clicks are used: nothing but the click sounds there, so
+    they can't be confused with strums, and most of them must be found."""
     if not clicks_s:
         return None
-    sos = signal.butter(4, [click_hz * 0.92, click_hz * 1.08], btype="bandpass", fs=sr, output="sos")
-    band = np.abs(signal.sosfiltfilt(sos, y))
+    if count_in:
+        clicks_s = clicks_s[:count_in]
+    need = max(2, int(np.ceil(0.75 * len(clicks_s)))) if count_in else 3
     hop = 64
-    env = band[: len(band) // hop * hop].reshape(-1, hop).max(axis=1)
+
+    def band_env(lo: float, hi: float) -> np.ndarray:
+        sos = signal.butter(4, [lo, min(hi, sr / 2 - 100)], btype="bandpass", fs=sr, output="sos")
+        b = np.abs(signal.sosfiltfilt(sos, y))
+        return b[: len(b) // hop * hop].reshape(-1, hop).max(axis=1)
+
+    env = band_env(click_hz * 0.92, click_hz * 1.08)
     if env.size == 0:
         return None
+    # The click is a pure tone; a strum attack is broadband. Requiring the click band to stand
+    # well above both neighbouring bands stops guitar attacks that land on the beat from being
+    # mistaken for click bleed (which shifted the whole beat grid on headphone takes).
+    flank = np.maximum(band_env(click_hz * 0.70, click_hz * 0.82), band_env(click_hz * 1.20, click_hz * 1.35))
     floor = np.median(env) + 1e-9
     offsets = []
     for c in clicks_s:
@@ -106,11 +117,11 @@ def measure_click_offset(y: np.ndarray, sr: int, clicks_s: list[float],
             continue
         seg = env[a:b]
         k = int(np.argmax(seg))
-        if seg[k] < 8 * floor:
+        if seg[k] < 8 * floor or seg[k] < 3 * flank[a + k]:
             continue
-        k0 = int(np.argmax(seg >= seg[k] * 0.5))  # attack = first frame at half the peak
+        k0 = int(np.argmax(seg >= seg[k] * 0.3))  # attack = first frame at 30% of the peak (robust to reverb build-up)
         offsets.append(((a + k0) * hop / sr - c) * 1000.0)
-    if len(offsets) < 3:
+    if len(offsets) < need:
         return None
     offsets = np.array(offsets)
     med = float(np.median(offsets))
@@ -130,8 +141,8 @@ def _bp_model():
     return Model(build_icassp_2022_model_path(FilenameSuffix.onnx))
 
 
-def run_basic_pitch(y: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray, list[dict]]:
-    """Returns (frame_times, note_activation[frames, 88], note events)."""
+def run_basic_pitch(y: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
+    """Returns (frame_times, note_activation[frames, 88], onset_activation[frames, 88], note events)."""
     from basic_pitch.inference import predict
     from basic_pitch.note_creation import model_frames_to_time
 
@@ -144,11 +155,11 @@ def run_basic_pitch(y: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray, lis
                                      minimum_frequency=70, maximum_frequency=1400)
     finally:
         os.unlink(path)
-    note = out["note"]
+    note, onset = out["note"], out["onset"]
     times = model_frames_to_time(note.shape[0])
     notes = [{"onset": round(float(s), 3), "offset": round(float(e), 3), "pitch": int(p),
               "confidence": round(float(a), 3)} for s, e, p, a, _ in events]
-    return times, note, notes
+    return times, note, onset, notes
 
 
 def _window_max(times: np.ndarray, mat: np.ndarray, a: float, b: float) -> np.ndarray:
@@ -186,8 +197,8 @@ class AudioAnalysis:
         self._bp = None
         if use_basic_pitch:
             try:
-                ft, note_act, self.note_events = run_basic_pitch(y, sr)
-                self._bp = (ft, note_act)
+                ft, note_act, onset_act, self.note_events = run_basic_pitch(y, sr)
+                self._bp = (ft, note_act, onset_act)
                 self.used_basic_pitch = True
             except Exception:  # pragma: no cover - model/runtime issues
                 log.exception("basic-pitch failed; falling back to CQT-only evidence")
@@ -195,24 +206,36 @@ class AudioAnalysis:
         C = np.abs(librosa.cqt(y, sr=sr, hop_length=512, fmin=librosa.midi_to_hz(40),
                                n_bins=48, bins_per_octave=12))
         db = librosa.amplitude_to_db(C, ref=1.0)
+        self.cqt_abs = db.T                       # absolute dB (for per-pitch attack rise)
         self.cqt_db = (db - db.max(axis=0, keepdims=True)).T
         self.cqt_t = librosa.frames_to_time(np.arange(C.shape[1]), sr=sr, hop_length=512)
         self.chroma = librosa.feature.chroma_cqt(C=C, sr=sr, hop_length=512, n_chroma=12,
                                                  bins_per_octave=12, fmin=librosa.midi_to_hz(40))
+        self.detect()
 
-        frames = librosa.onset.onset_detect(onset_envelope=self.env, sr=sr, hop_length=HOP,
-                                            delta=GLOBAL_DELTA, wait=4, normalize=False)
+    def detect(self) -> None:
+        """Strum detection + per-strum evidence. Cheap compared with the feature extraction in
+        __init__, so tuning re-runs only this when onset parameters change."""
+        frames = librosa.onset.onset_detect(onset_envelope=self.env, sr=self.sr, hop_length=HOP,
+                                            delta=P.global_delta, wait=4, normalize=False)
         self.strums: list[Strum] = []
         for fr in frames:
             self._add(fr, recovered=False)
         self._energy_ref = None
         self._finalize()
+        # spectral flux also peaks while a chord decays (partials beating); a real strum raises
+        # the level, so drop onsets whose energy doesn't rise and re-derive the windows
+        kept = [s for s in self.strums if s.rise >= P.min_rise]
+        if len(kept) != len(self.strums):
+            self.strums = kept
+            self._energy_ref = None
+            self._finalize()
 
     # -- building strums --------------------------------------------------------
     def _add(self, frame: int, recovered: bool) -> Strum | None:
-        t = float(self.env_t[frame] - STRUM_TIME_BIAS_S)
+        t = float(self.env_t[frame] - P.strum_time_bias_s)
         for s in self.strums:
-            if abs(s.t - t) < MERGE_WINDOW_S:
+            if abs(s.t - t) < P.merge_window_s:
                 s.strength = max(s.strength, float(self.env[frame]))
                 return None
         st = Strum(t=t, strength=float(self.env[frame]), recovered=recovered)
@@ -230,11 +253,22 @@ class AudioAnalysis:
             pre = float(np.sqrt(np.mean(y[p0:p1] ** 2))) if p1 > p0 else 1e-6
             post = float(np.sqrt(np.mean(y[a:a1] ** 2))) if a1 > a else 0.0
             st.rise = post / (pre + 1e-6)
+        raw = [st.energy for st in self.strums]
         if self._energy_ref is None:
             e = np.array([s.energy for s in self.strums if not s.recovered])
             self._energy_ref = float(np.percentile(e, 75)) if len(e) else 1.0
         for st in self.strums:
             st.energy = st.energy / (self._energy_ref or 1.0)
+        real_t = [s.t for s in self.strums if s.energy >= P.ghost_energy]
+        for st, e_raw in zip(self.strums, raw):
+            # sustain: does the chord still ring just before the next real strum (or 0.8 s
+            # later)? Ghost-level onsets (noise in the silence after a choked chord) don't count.
+            later = [t for t in real_t if t > st.t + 0.01]
+            nxt = later[0] if later else min(st.t + 0.8, self.duration)
+            st.gap = float(nxt - st.t)
+            e0, e1 = int(max(nxt - 0.08, st.t + 0.12) * sr), int(nxt * sr)
+            tail = float(np.sqrt(np.mean(y[e0:e1] ** 2))) if e1 > e0 else e_raw
+            st.sustain = tail / (e_raw + 1e-9)
         for i, st in enumerate(self.strums):
             nxt = self.strums[i + 1].t if i + 1 < len(self.strums) else self.duration
             st.end = float(min(nxt, st.t + 0.40))
@@ -249,10 +283,20 @@ class AudioAnalysis:
         i0 = min(int(np.searchsorted(self.cqt_t, a)), n - 1)
         i1 = min(max(int(np.searchsorted(self.cqt_t, b)), i0 + 1), n)
         st.chroma = self.chroma[:, i0:i1].mean(axis=1).tolist()
+        # attack evidence: did this pitch get a *new* attack at this strum? Separates a string
+        # that was struck from one that is only implied by another string's harmonics or by
+        # the previous strum still ringing.
+        pre = self.cqt_abs[max(0, int(np.searchsorted(self.cqt_t, st.t - 0.07))):
+                           max(1, int(np.searchsorted(self.cqt_t, st.t - 0.01)))]
+        post = _window_max(self.cqt_t, self.cqt_abs, st.t + 0.01, st.t + 0.12)
+        pre_db = pre.mean(axis=0) if len(pre) else post - 30
+        st.cqt_rise = {40 + k: float(post[k] - pre_db[k]) for k in range(48)}
         if self._bp is not None:
-            ft, note_act = self._bp
+            ft, note_act, onset_act = self._bp
             pres = _window_max(ft, note_act, a, b)
             st.presence = {m: float(pres[m - BP_MIDI_OFFSET]) for m in range(36, 100)}
+            ons = _window_max(ft, onset_act, st.t - 0.03, st.t + 0.09)
+            st.attack = {m: float(ons[m - BP_MIDI_OFFSET]) for m in range(36, 100)}
         else:  # CQT-only fallback: map dB to a pseudo-activation
             st.presence = {m: float(np.clip((st.cqt_db.get(m, -80) + 30) / 25, 0, 1)) for m in range(36, 100)}
 
@@ -260,14 +304,14 @@ class AudioAnalysis:
         """Score-informed pass: look for a strum near an expected time that the strict global
         pass missed. Accepts the strongest flux peak in the window if it stands clear of the
         local background."""
-        i0 = np.searchsorted(self.env_t, t_expected_s - window_s + STRUM_TIME_BIAS_S)
-        i1 = np.searchsorted(self.env_t, t_expected_s + window_s + STRUM_TIME_BIAS_S)
+        i0 = np.searchsorted(self.env_t, t_expected_s - window_s + P.strum_time_bias_s)
+        i1 = np.searchsorted(self.env_t, t_expected_s + window_s + P.strum_time_bias_s)
         if i1 - i0 < 3:
             return None
         seg = self.env[i0:i1]
         k = int(np.argmax(seg))
         bg = float(np.median(self.env[max(0, i0 - 40):i1 + 40]))
-        if seg[k] < RECOVER_MIN or seg[k] < 4 * bg:
+        if seg[k] < P.recover_min or seg[k] < 4 * bg:
             return None
         st = self._add(i0 + k, recovered=True)
         if st is not None:
@@ -280,9 +324,9 @@ class AudioAnalysis:
 
 
 def analyze_audio(wav_path: str, clicks_s: list[float] | None = None,
-                  use_basic_pitch: bool = True) -> AudioAnalysis:
+                  use_basic_pitch: bool = True, count_in: int | None = None) -> AudioAnalysis:
     y_raw, sr = load_wav(wav_path)
-    click_offset = measure_click_offset(y_raw, sr, clicks_s or [])
+    click_offset = measure_click_offset(y_raw, sr, clicks_s or [], count_in=count_in)
     y = preprocess(y_raw, sr)
     return AudioAnalysis(y, sr, click_offset, use_basic_pitch)
 
@@ -309,10 +353,10 @@ def verify_chord(st: Strum, chord: str, direction: str = "D") -> dict:
         p = st.presence.get(m, 0.0)
         if direction == "U" and i not in UPSTRUM_STRINGS:
             # bass strings on an up-strum: not required, still credited if they ring
-            strings[i] = {"status": "ok" if p >= PRESENT_THR else "not_required", "midi": m,
+            strings[i] = {"status": "ok" if p >= P.present_thr else "not_required", "midi": m,
                           "presence": round(p, 3), "confidence": 0.5}
             continue
-        if p >= PRESENT_THR:
+        if p >= P.present_thr:
             strings[i] = {"status": "ok", "midi": m, "presence": round(p, 3), "confidence": round(min(1.0, p + 0.2), 2)}
             continue
         # a clearly stronger neighbouring semitone (not explained by the chord) => wrong fret
@@ -322,7 +366,7 @@ def verify_chord(st: Strum, chord: str, direction: str = "D") -> dict:
             if q in expected or q < OPEN_MIDI[i]:
                 continue
             pq = st.presence.get(q, 0.0)
-            if pq >= PRESENT_THR and pq > p + 0.15 and (best is None or pq > best[1]):
+            if pq >= P.present_thr and pq > p + P.wrong_fret_margin and (best is None or pq > best[1]):
                 best = (d, pq)
         if best:
             claimed.add(m + best[0])
@@ -331,9 +375,9 @@ def verify_chord(st: Strum, chord: str, direction: str = "D") -> dict:
                           "confidence": round(min(0.95, 0.5 + best[1] / 2), 2)}
             continue
         # missing: require basic-pitch miss AND weak CQT energy unless basic-pitch is very sure
-        cqt_weak = st.cqt_db.get(m, -80.0) < -18.0
-        if p < ABSENT_THR or cqt_weak:
-            conf = 0.85 if (p < ABSENT_THR and cqt_weak) else 0.6
+        cqt_weak = st.cqt_db.get(m, -80.0) < P.missing_cqt_db
+        if p < P.absent_thr or cqt_weak:
+            conf = 0.85 if (p < P.absent_thr and cqt_weak) else 0.6
             if _harmonic_partner(m, [o for o in expected if o != m]):
                 conf -= 0.2
             strings[i] = {"status": "missing", "midi": m, "presence": round(p, 3), "confidence": round(conf, 2)}
@@ -345,7 +389,7 @@ def verify_chord(st: Strum, chord: str, direction: str = "D") -> dict:
         p = st.presence.get(m, 0.0)
         # an open muted string that sounds and isn't explained by the chord
         # (only judged on down-strums; on up-strums it's usually leftover ring)
-        if direction == "D" and p >= 0.4 and m not in expected and st.cqt_db.get(m, -80) > -20:
+        if direction == "D" and p >= P.muted_sounding_presence and m not in expected and st.cqt_db.get(m, -80) > P.muted_sounding_cqt_db:
             strings[i] = {"status": "muted_sounding", "midi": m, "presence": round(p, 3),
                           "confidence": round(min(0.95, p), 2)}
             claimed.add(m)
@@ -353,7 +397,7 @@ def verify_chord(st: Strum, chord: str, direction: str = "D") -> dict:
             strings[i] = {"status": "muted_ok", "midi": -1, "presence": round(p, 3), "confidence": 0.7}
 
     unexpected = [m for m, p in st.presence.items()
-                  if p >= 0.5 and m not in claimed and 40 <= m <= 88 and not _harmonic_partner(m, expected)]
+                  if p >= P.unexpected_presence and m not in claimed and 40 <= m <= 88 and not _harmonic_partner(m, expected)]
 
     required = [s for s in strings.values() if s["status"] not in ("muted_ok", "muted_sounding", "not_required")]
     n_ok = sum(1 for s in required if s["status"] == "ok")

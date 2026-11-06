@@ -45,10 +45,18 @@ def render_take(
     jitter_ms: float = 4.0,
     click_hz: float | None = 3000.0,       # audible click bleed; None = headphones
     click_latency_ms: float = 0.0,         # click arrives this much after logged time
+    skip: set[int] | None = None,          # events the player doesn't strum at all
+    choke: dict | None = None,             # {"event": i, "after_s": 0.12} -> chord cut short
+    augment: dict | None = None,           # {"reverb": 0..1, "tilt_db": -6..6, "snr_db": 20..50}
+    truth: list | None = None,             # filled with per-event ground truth if given
     seed: int = 0,
 ) -> tuple[np.ndarray, list[float]]:
     """Returns (audio, clicks_ms). clicks_ms are 'logged' click times (every beat,
-    including the count-in) relative to recording start."""
+    including the count-in) relative to recording start.
+
+    If `truth` is a list it receives one dict per expected event: the true first-attack time
+    (ms from recording start), the played direction, and each string's state
+    (ok | missing | wrong_fret | muted_sounding | muted_ok | not_struck), keyed by string 1..6."""
     rng = np.random.default_rng(seed)
     beat_s = 60.0 / exercise["bpm"]
     bpb = beats_per_bar(exercise["time_sig"])
@@ -76,6 +84,8 @@ def render_take(
               + rng.normal(0, jitter_ms / 1000))
         nxt = events[i + 1] if i + 1 < len(events) else None
         dur = ((start + nxt.beat_pos * beat_s) - t0 + 0.05) if nxt else 1.5
+        if choke and choke.get("event") == i:
+            dur = min(dur, choke.get("after_s", 0.12))
         shape = CHORDS[ev.chord]
         midis = list(shape.midi)
         if extra_low and extra_low.get("event") == i:
@@ -94,6 +104,29 @@ def render_take(
             order = order[:4]
         spread = 0.008
         amp = 0.18 if direction == "D" else 0.13
+        if skip and i in skip:
+            if truth is not None:
+                truth.append({"idx": i, "t_ms": None, "direction": None, "chord": ev.chord,
+                              "strings": {}, "choked": False, "skipped": True})
+            continue
+        if truth is not None:
+            st = {}
+            for k in range(6):
+                s_no = 6 - k
+                exp_m = shape.midi[k]
+                if k not in order:
+                    st[s_no] = "not_struck"
+                elif exp_m < 0:
+                    st[s_no] = "muted_sounding" if midis[k] >= 0 else "muted_ok"
+                elif midis[k] < 0:
+                    st[s_no] = "missing"
+                elif midis[k] != exp_m:
+                    st[s_no] = "wrong_fret"
+                else:
+                    st[s_no] = "ok"
+            truth.append({"idx": i, "t_ms": round(t0 * 1000, 2), "direction": direction,
+                          "chord": ev.chord, "strings": st,
+                          "choked": bool(choke and choke.get("event") == i), "skipped": False})
         for j, k in enumerate(order):
             m = midis[k]
             if m < 0:
@@ -108,8 +141,33 @@ def render_take(
                 seg[-r:] *= np.linspace(1, 0, r)
             y[a:a + len(seg)] += seg
     y += rng.standard_normal(len(y)) * 0.0015
+    if augment:
+        y = _augment(y, augment, np.random.default_rng(seed + 10_000))
     y = y / (np.max(np.abs(y)) + 1e-9) * 0.8
     return y.astype(np.float32), clicks_ms
+
+
+def _augment(y: np.ndarray, aug: dict, rng: np.random.Generator) -> np.ndarray:
+    """Room + mic + noise: exponentially decaying noise reverb, a spectral tilt (laptop mics
+    are bright and bass-light), and broadband noise at a given SNR."""
+    from scipy import signal as sig
+    rev = float(aug.get("reverb", 0.0))
+    if rev > 0:
+        rt = 0.15 + 0.6 * rev                       # seconds
+        n = int(rt * SR)
+        ir = rng.standard_normal(n) * np.exp(-6.9 * np.arange(n) / n)
+        ir[0] = 1.0 / max(rev, 1e-3)
+        y = sig.fftconvolve(y, ir / np.abs(ir).sum() * 4)[: len(y)]
+    tilt = float(aug.get("tilt_db", 0.0))
+    if tilt:
+        sos = sig.butter(1, 1000, btype="highpass" if tilt > 0 else "lowpass", fs=SR, output="sos")
+        g = 10 ** (abs(tilt) / 20) - 1
+        y = y + g * sig.sosfilt(sos, y)
+    snr = aug.get("snr_db")
+    if snr is not None:
+        p = np.mean(y ** 2)
+        y = y + rng.standard_normal(len(y)) * np.sqrt(p / 10 ** (snr / 10))
+    return y
 
 
 def write_take(path: str, exercise: dict, **kw) -> list[float]:
