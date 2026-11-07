@@ -2,12 +2,55 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Chord, type GradedEvent, type GradeError, type Session, type Track } from "@/lib/api";
+import { api, type Chord, type GradedEvent, type GradeError, type Patterns, type Session, type Track } from "@/lib/api";
 import { COLORS, drawGrid, drawHand, fillCell, label, mapper, ring, strokeString } from "@/lib/draw";
 import { applyH, FINGER_TIPS, type Mat3, type Pt } from "@/lib/geometry";
 
 const COMP_LABEL: Record<string, string> = { fingering: "Fingering", pitch: "Pitch", timing: "Timing", direction: "Strum direction" };
 const toPts = (a: number[] | null): Pt[] | null => (a ? Array.from({ length: a.length / 2 }, (_, i) => [a[2 * i], a[2 * i + 1]] as Pt) : null);
+
+const DIFF_WORD = { missing: "missed", extra: "extra strum", direction: "wrong direction" } as const;
+
+/** Played strum pattern per bar under the chart's pattern; mismatched slots highlighted. */
+function PatternPanel({ p, onBar }: { p: Patterns; onBar: (bar: number) => void }) {
+  const res = p.resolution;
+  const cell = (ch: string, k: number, kind?: string) => (
+    <span key={k} title={kind} style={{
+      display: "inline-block", width: "1.3em", textAlign: "center", fontFamily: "ui-monospace, monospace",
+      borderLeft: k % res === 0 ? "1px solid var(--line)" : undefined,
+      color: kind ? "var(--bad)" : ch === "-" ? "var(--muted)" : undefined, fontWeight: kind ? 700 : undefined,
+    }}>{ch === "-" ? "·" : ch === "x" ? "•" : ch}</span>
+  );
+  return (
+    <div className="panel">
+      <h3>Strum pattern <span className="muted small">
+        {p.bars_matching}/{p.bars.length} bars as written · same rhythm in {Math.round((p.consistency ?? 0) * 100)}% of bars
+        · • = strummed, direction unclear</span></h3>
+      <div style={{ overflowX: "auto" }}>
+        <table className="small" style={{ borderCollapse: "collapse" }}>
+          <tbody>
+            {p.bars.map((b) => {
+              const bad = new Map(b.diffs.map((d) => [d.slot, d.kind]));
+              return (
+                <tr key={b.bar} onClick={() => onBar(b.bar)} style={{ cursor: "pointer" }}>
+                  <td className="muted" style={{ paddingRight: 8 }}>bar {b.bar}</td>
+                  <td style={{ paddingRight: 12 }}>{b.chord}</td>
+                  <td style={{ paddingRight: 16 }}>
+                    <div className="muted">{[...b.expected].map((ch, k) => cell(ch, k))}</div>
+                    <div>{[...b.played].map((ch, k) => cell(ch, k, bad.get(k)))}</div>
+                  </td>
+                  <td>{b.matches ? <span style={{ color: "var(--good)" }}>✓</span>
+                    : <span className="muted">{b.diffs.map((d) => `${d.beat_label}: ${DIFF_WORD[d.kind]}`).join(", ")}</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small" style={{ margin: "6px 0 0" }}>Top row: the chart. Bottom row: what you played. Click a bar to jump there.</p>
+    </div>
+  );
+}
 
 export default function Replay() {
   const { id } = useParams<{ id: string }>();
@@ -152,6 +195,12 @@ export default function Replay() {
               <line x1={(now / dur) * 1000} x2={(now / dur) * 1000} y1="0" y2="120" stroke="#ffd666" />
             </svg>
           </div>
+
+          {s.patterns && <PatternPanel p={s.patterns} onBar={(bar) => {
+            const e = events.find((x) => x.bar === bar);
+            const v = videoRef.current;
+            if (e && v) { v.currentTime = Math.max(0, e.t_ms / 1000 - 0.3); v.play(); }
+          }} />}
         </div>
 
         <aside className="grid">

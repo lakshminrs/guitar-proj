@@ -118,6 +118,7 @@ def analyze_session(session_id: str) -> None:
 
         note = coaching_note(ex["title"], res.score, res.top)
         summary = {"components": res.components, "top": res.top, "aggregates": res.aggregates,
+                   "patterns": res.patterns,
                    "meta": {**res.meta, "vision_stats": vision.stats if vision else None,
                             "vision_source": vision.source if vision else None,
                             "mirrored": vision.mirrored if vision else None},

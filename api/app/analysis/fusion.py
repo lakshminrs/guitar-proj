@@ -13,6 +13,7 @@ from ..theory import CHORDS, beats_per_bar, expected_events
 from . import geometry as G
 from .audio import AudioAnalysis, verify_chord
 from .params import P
+from .patterns import PlayedStrum, infer_patterns
 from .rules import aggregate_errors, event_errors, rank_top
 from .vision import VisionTrack
 
@@ -28,6 +29,7 @@ class GradeResult:
     score: float
     components: dict
     meta: dict
+    patterns: dict | None = None
 
 
 class BeatClock:
@@ -51,6 +53,18 @@ class BeatClock:
         if i + 1 < len(self.c):
             return float(self.c[i] + (k - i) * (self.c[i + 1] - self.c[i]))
         return float(self.c[-1] + (k - (len(self.c) - 1)) * self.beat_ms)
+
+    def beat_pos(self, t_ms: float) -> float:
+        """Inverse of __call__: recording time (ms) -> beats from bar 1 beat 1."""
+        if len(self.c) < 2:
+            return t_ms / self.beat_ms - self.count_in
+        if t_ms <= self.c[0]:
+            k = (t_ms - self.c[0]) / self.beat_ms
+        elif t_ms >= self.c[-1]:
+            k = len(self.c) - 1 + (t_ms - self.c[-1]) / self.beat_ms
+        else:
+            k = float(np.interp(t_ms, self.c, np.arange(len(self.c))))
+        return k - self.count_in
 
 
 def timing_score(dt_ms: float) -> float:
@@ -93,6 +107,20 @@ def _relative_sustain(strums, match: dict[int, int], n_exp: int) -> dict[int, fl
         if len(peers) >= 3:
             out[ei] = round(st.sustain / (float(np.median(peers)) + 1e-9), 3)
     return out
+
+
+def _fused_direction(audio: AudioAnalysis, vision: VisionTrack | None, st, chord: str):
+    """Video first (wrist velocity), audio string-order as cross-check.
+    -> (direction | None, confidence, audio direction, video direction)"""
+    a_dir, a_conf = audio.direction(st, chord)
+    v_dir, v_conf, _speed = vision.strum_direction(st.t) if vision else (None, 0.0, 0.0)
+    if v_dir and a_dir:
+        obs, conf = (v_dir, min(1.0, 0.5 + v_conf / 2 + a_conf / 4)) if v_dir == a_dir else (v_dir, v_conf * 0.6)
+    elif v_dir:
+        obs, conf = v_dir, v_conf * 0.85
+    else:
+        obs, conf = a_dir, a_conf * 0.7
+    return obs, conf, a_dir, v_dir
 
 
 def _beat_label(slot: int, subdiv: int) -> str:
@@ -162,15 +190,7 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
             verdict = verify_chord(st, e.chord, e.direction)
             scores["pitch"] = verdict["pitch_score"]
 
-            # direction: video first (wrist velocity), audio string-order as cross-check
-            a_dir, a_conf = audio.direction(st, e.chord)
-            v_dir, v_conf, speed = vision.strum_direction(st.t) if vision else (None, 0.0, 0.0)
-            if v_dir and a_dir:
-                obs, conf = (v_dir, min(1.0, 0.5 + v_conf / 2 + a_conf / 4)) if v_dir == a_dir else (v_dir, v_conf * 0.6)
-            elif v_dir:
-                obs, conf = v_dir, v_conf * 0.85
-            else:
-                obs, conf = a_dir, a_conf * 0.7
+            obs, conf, a_dir, v_dir = _fused_direction(audio, vision, st, e.chord)
             ev["observed_direction"], ev["direction_confidence"] = obs, round(conf, 2)
             ev["direction_sources"] = {"video": v_dir, "audio": a_dir}
             if obs:
@@ -225,6 +245,17 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
                            "message": f"Extra strum in bar {exp[ei].bar} that isn't in the pattern.",
                            "overlay": {"frame": int(round(s.t * fps)), "draw": [{"kind": "beat", "style": "error"}]}})
 
+    # what was actually strummed: matched strums (with their fused direction) plus clear extras
+    played = [PlayedStrum(clock.beat_pos(ev["t_ms"]),
+                          ev.get("observed_direction") if ev.get("direction_confidence", 0) >= P.direction_min_conf else None,
+                          strums[match[ev["idx"]]].energy)
+              for ev in events if not ev["missed"]]
+    for s in extras:
+        ei = int(np.argmin([abs(s.t * 1000 - t) for t in exp_t]))
+        d, c, _, _ = _fused_direction(audio, vision, s, exp[ei].chord)
+        played.append(PlayedStrum(clock.beat_pos(s.t * 1000), d if c >= P.direction_min_conf else None, s.energy))
+    patterns = infer_patterns(exercise, played)
+
     aggregates = aggregate_errors(events)
     top = rank_top(all_errors, aggregates)
     all_errors.sort(key=lambda x: x["t_ms"])
@@ -239,4 +270,4 @@ def grade(exercise: dict, audio: AudioAnalysis, vision: VisionTrack | None,
             "beat_ms": clock.beat_ms, "vision": bool(vision), "grid": has_grid,
             "basic_pitch": audio.used_basic_pitch, "bars": len(exercise["bars"]), "beats_per_bar": bpb}
     return GradeResult(events=events, errors=all_errors, aggregates=aggregates, top=top,
-                       score=score, components=comps, meta=meta)
+                       score=score, components=comps, meta=meta, patterns=patterns)

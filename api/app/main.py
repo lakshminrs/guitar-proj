@@ -153,7 +153,7 @@ def _session_dict(s: SessionRow, full: bool = True) -> dict:
     if full:
         d.update({"calibration": s.calibration, "count_in_beats": s.count_in_beats,
                   "meta": summ.get("meta"), "aggregates": summ.get("aggregates"),
-                  "errors": summ.get("errors")})
+                  "errors": summ.get("errors"), "patterns": summ.get("patterns")})
     return d
 
 

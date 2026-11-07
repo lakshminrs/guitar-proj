@@ -1,0 +1,577 @@
+{
+ "n_cases": 40,
+ "overall": {
+  "errors": {
+   "muted_string": {
+    "tp": 6,
+    "fp": 3,
+    "fn": 8,
+    "precision": 0.6666666666666666,
+    "recall": 0.42857142857142855,
+    "f1": 0.5217391304347826
+   },
+   "wrong_fret": {
+    "tp": 7,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "strum_too_wide": {
+    "tp": 8,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "wrong_chord": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "precision": null,
+    "recall": null,
+    "f1": null
+   },
+   "late": {
+    "tp": 6,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "early": {
+    "tp": 8,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "missed_strum": {
+    "tp": 11,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "extra_strum": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "precision": null,
+    "recall": null,
+    "f1": null
+   },
+   "wrong_direction": {
+    "tp": 3,
+    "fp": 0,
+    "fn": 7,
+    "precision": 1.0,
+    "recall": 0.3,
+    "f1": 0.4615384615384615
+   },
+   "choked_chord": {
+    "tp": 3,
+    "fp": 4,
+    "fn": 0,
+    "precision": 0.42857142857142855,
+    "recall": 1.0,
+    "f1": 0.6
+   }
+  },
+  "strings": {
+   "missing": {
+    "tp": 6,
+    "fp": 0,
+    "fn": 8,
+    "precision": 1.0,
+    "recall": 0.42857142857142855,
+    "f1": 0.6
+   },
+   "wrong_fret": {
+    "tp": 7,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "muted_sounding": {
+    "tp": 12,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   }
+  },
+  "timing": {
+   "n": 1653,
+   "median_abs_ms": 4.0900000000001455,
+   "p90_abs_ms": 10.484000000000375
+  },
+  "onsets": {
+   "precision": 0.979845880260818,
+   "recall": 1.0,
+   "f1": 0.9898203592814371
+  },
+  "direction": {
+   "fused": {
+    "accuracy": 0.9948805460750854,
+    "coverage": 0.3545069570477919
+   },
+   "audio": {
+    "accuracy": 0.9948805460750854,
+    "coverage": 0.3545069570477919
+   }
+  },
+  "fingers": {
+   "n": 0,
+   "accuracy": null
+  },
+  "wrong_chord_false_alarm_rate": 0.0
+ },
+ "groups": {
+  "device=headphones": {
+   "errors": {
+    "muted_string": {
+     "tp": 2,
+     "fp": 2,
+     "fn": 1,
+     "precision": 0.5,
+     "recall": 0.6666666666666666,
+     "f1": 0.5714285714285715
+    },
+    "wrong_fret": {
+     "tp": 2,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "strum_too_wide": {
+     "tp": 2,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "wrong_chord": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "late": {
+     "tp": 2,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "early": {
+     "tp": 1,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "missed_strum": {
+     "tp": 5,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "extra_strum": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "wrong_direction": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 3,
+     "precision": null,
+     "recall": 0.0,
+     "f1": 0.0
+    },
+    "choked_chord": {
+     "tp": 1,
+     "fp": 2,
+     "fn": 0,
+     "precision": 0.3333333333333333,
+     "recall": 1.0,
+     "f1": 0.5
+    }
+   },
+   "strings": {
+    "missing": {
+     "tp": 2,
+     "fp": 0,
+     "fn": 1,
+     "precision": 1.0,
+     "recall": 0.6666666666666666,
+     "f1": 0.8
+    },
+    "wrong_fret": {
+     "tp": 2,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "muted_sounding": {
+     "tp": 4,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    }
+   },
+   "timing": {
+    "n": 515,
+    "median_abs_ms": 3.9399999999986903,
+    "p90_abs_ms": 9.325999999999752
+   },
+   "onsets": {
+    "precision": 0.9735349716446124,
+    "recall": 1.0,
+    "f1": 0.9865900383141762
+   },
+   "direction": {
+    "fused": {
+     "accuracy": 0.9888888888888889,
+     "coverage": 0.34951456310679613
+    },
+    "audio": {
+     "accuracy": 0.9888888888888889,
+     "coverage": 0.34951456310679613
+    }
+   },
+   "fingers": {
+    "n": 0,
+    "accuracy": null
+   },
+   "wrong_chord_false_alarm_rate": 0.0
+  },
+  "device=speaker": {
+   "errors": {
+    "muted_string": {
+     "tp": 4,
+     "fp": 1,
+     "fn": 7,
+     "precision": 0.8,
+     "recall": 0.36363636363636365,
+     "f1": 0.5000000000000001
+    },
+    "wrong_fret": {
+     "tp": 5,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "strum_too_wide": {
+     "tp": 6,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "wrong_chord": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "late": {
+     "tp": 4,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "early": {
+     "tp": 7,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "missed_strum": {
+     "tp": 6,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "extra_strum": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "wrong_direction": {
+     "tp": 3,
+     "fp": 0,
+     "fn": 4,
+     "precision": 1.0,
+     "recall": 0.42857142857142855,
+     "f1": 0.6
+    },
+    "choked_chord": {
+     "tp": 2,
+     "fp": 2,
+     "fn": 0,
+     "precision": 0.5,
+     "recall": 1.0,
+     "f1": 0.6666666666666666
+    }
+   },
+   "strings": {
+    "missing": {
+     "tp": 4,
+     "fp": 0,
+     "fn": 7,
+     "precision": 1.0,
+     "recall": 0.36363636363636365,
+     "f1": 0.5333333333333333
+    },
+    "wrong_fret": {
+     "tp": 5,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "muted_sounding": {
+     "tp": 8,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    }
+   },
+   "timing": {
+    "n": 1138,
+    "median_abs_ms": 4.1599999999998545,
+    "p90_abs_ms": 10.928999999999732
+   },
+   "onsets": {
+    "precision": 0.9827288428324698,
+    "recall": 1.0,
+    "f1": 0.9912891986062717
+   },
+   "direction": {
+    "fused": {
+     "accuracy": 0.9975369458128078,
+     "coverage": 0.35676625659050965
+    },
+    "audio": {
+     "accuracy": 0.9975369458128078,
+     "coverage": 0.35676625659050965
+    }
+   },
+   "fingers": {
+    "n": 0,
+    "accuracy": null
+   },
+   "wrong_chord_false_alarm_rate": 0.0
+  },
+  "source=synthetic": {
+   "errors": {
+    "muted_string": {
+     "tp": 6,
+     "fp": 3,
+     "fn": 8,
+     "precision": 0.6666666666666666,
+     "recall": 0.42857142857142855,
+     "f1": 0.5217391304347826
+    },
+    "wrong_fret": {
+     "tp": 7,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "strum_too_wide": {
+     "tp": 8,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "wrong_chord": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "late": {
+     "tp": 6,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "early": {
+     "tp": 8,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "missed_strum": {
+     "tp": 11,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "extra_strum": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "precision": null,
+     "recall": null,
+     "f1": null
+    },
+    "wrong_direction": {
+     "tp": 3,
+     "fp": 0,
+     "fn": 7,
+     "precision": 1.0,
+     "recall": 0.3,
+     "f1": 0.4615384615384615
+    },
+    "choked_chord": {
+     "tp": 3,
+     "fp": 4,
+     "fn": 0,
+     "precision": 0.42857142857142855,
+     "recall": 1.0,
+     "f1": 0.6
+    }
+   },
+   "strings": {
+    "missing": {
+     "tp": 6,
+     "fp": 0,
+     "fn": 8,
+     "precision": 1.0,
+     "recall": 0.42857142857142855,
+     "f1": 0.6
+    },
+    "wrong_fret": {
+     "tp": 7,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    },
+    "muted_sounding": {
+     "tp": 12,
+     "fp": 0,
+     "fn": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0
+    }
+   },
+   "timing": {
+    "n": 1653,
+    "median_abs_ms": 4.0900000000001455,
+    "p90_abs_ms": 10.484000000000375
+   },
+   "onsets": {
+    "precision": 0.979845880260818,
+    "recall": 1.0,
+    "f1": 0.9898203592814371
+   },
+   "direction": {
+    "fused": {
+     "accuracy": 0.9948805460750854,
+     "coverage": 0.3545069570477919
+    },
+    "audio": {
+     "accuracy": 0.9948805460750854,
+     "coverage": 0.3545069570477919
+    }
+   },
+   "fingers": {
+    "n": 0,
+    "accuracy": null
+   },
+   "wrong_chord_false_alarm_rate": 0.0
+  }
+ },
+ "objective": 1.5785,
+ "params": {
+  "global_delta": 0.3,
+  "recover_min": 0.12,
+  "merge_window_s": 0.05,
+  "strum_time_bias_ms": 13.0,
+  "ghost_energy": 0.12,
+  "min_rise": 1.0,
+  "present_thr": 0.3,
+  "absent_thr": 0.15,
+  "missing_cqt_db": -18.0,
+  "wrong_fret_margin": 0.15,
+  "muted_sounding_presence": 0.4,
+  "muted_sounding_cqt_db": -20.0,
+  "unexpected_presence": 0.5,
+  "choke_ratio": 0.25,
+  "choke_min_gap_s": 0.45,
+  "video_min_speed": 0.6,
+  "direction_min_conf": 0.45,
+  "timing_err_ms": 40.0,
+  "wrong_chord_margin": 0.12,
+  "wrong_chord_max_pitch": 0.5
+ },
+ "args": {
+  "synthetic": 40,
+  "augment": false,
+  "manifest": null,
+  "seed": 0,
+  "by": "device,guitar,source",
+  "out": "eval_results/step3b-synth40.json",
+  "compare": null
+ }
+}

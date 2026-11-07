@@ -27,6 +27,14 @@ export type Session = {
   score: number | null; created_at: string; video_url: string | null; audio_url: string | null;
   components: Record<string, number | null> | null; top_errors: TopError[] | null;
   coaching_note: string | null; errors?: GradeError[]; meta?: Record<string, unknown>;
+  patterns?: Patterns | null;
+};
+
+export type PatternDiff = { slot: number; beat_label: string; expected: string; played: string; kind: "missing" | "extra" | "direction" };
+export type Patterns = {
+  resolution: number; bars_matching: number; match_rate: number | null; consistency: number | null;
+  most_common_rhythm: string; diff_counts: Record<string, number>;
+  bars: { bar: number; chord: string; expected: string; played: string; matches: boolean; diffs: PatternDiff[] }[];
 };
 
 export type GradedEvent = {
