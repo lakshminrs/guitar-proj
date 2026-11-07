@@ -88,9 +88,13 @@ class VisionTrack:
         f = int(t * self.fps)
         a, b = max(0, f - int(0.06 * self.fps)), min(len(ys) - 1, f + int(0.02 * self.fps) + 1)
         seg = ys[a:b + 1]
-        if len(seg) < 2 or np.isnan(seg).any():
+        ok = ~np.isnan(seg)
+        # least-squares slope over every tracked frame in the window: endpoints alone are the
+        # noisiest estimate, and one dropped landmark frame shouldn't void the strum
+        if ok.sum() < 2 or ok.sum() < 0.6 * len(seg):
             return None, 0.0, 0.0
-        v = (seg[-1] - seg[0]) / ((len(seg) - 1) / self.fps)
+        tt = np.arange(len(seg))[ok] / self.fps
+        v = float(np.polyfit(tt, seg[ok], 1)[0]) if ok.sum() >= 3 else (seg[ok][-1] - seg[ok][0]) / (tt[-1] - tt[0])
         speed = abs(v)
         if speed < P.video_min_speed:  # too slow: likely a ghost/mute or tracking loss
             return None, 0.0, float(speed)
@@ -114,7 +118,8 @@ class VisionTrack:
             return None
         idx = np.arange(self.n)
         ys = np.interp(idx, idx[ok], ys[ok])
-        win = 7 if self.n >= 7 else (self.n // 2) * 2 - 1
+        win = int(round(0.233 * self.fps)) | 1  # ~233 ms whatever the frame rate (7 frames @ 30 fps)
+        win = win if self.n >= win else (self.n // 2) * 2 - 1
         if win >= 3:
             ys = savgol_filter(ys, win, 2)  # low-pass the trajectory
         near = np.convolve(ok.astype(float), np.ones(5), "same") > 0

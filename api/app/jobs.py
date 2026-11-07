@@ -17,13 +17,44 @@ from .feedback import coaching_note
 from .storage import session_dir
 
 log = logging.getLogger(__name__)
-VIDEO_FPS = 30
+VIDEO_FPS = 30        # floor; sources recorded at >= HIGH_FPS_MIN keep 60 fps
+HIGH_FPS_MIN = 48.0   # a strum lasts ~50-80 ms: 60 fps gives the wrist-velocity fit 4-5 frames, not 2-3
 
 
 def _probe_streams(path: str) -> set[str]:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", path],
                          capture_output=True, text=True, check=True)
     return {s["codec_type"] for s in json.loads(out.stdout).get("streams", [])}
+
+
+def _rate(s: str | None) -> float:
+    try:
+        n, d = (s or "0/0").split("/")
+        return float(n) / float(d) if float(d) else 0.0
+    except ValueError:
+        return 0.0
+
+
+def source_fps(path: str) -> float:
+    """Real frame rate of the first video stream. Browser WebM is variable-rate and often reports
+    a 1000/1 timebase or no average, so fall back to counting frames over the duration."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=avg_frame_rate:format=duration", "-of", "json", path],
+                         capture_output=True, text=True, check=True)
+    info = json.loads(out.stdout)
+    avg = _rate((info.get("streams") or [{}])[0].get("avg_frame_rate"))
+    if 1.0 <= avg <= 240.0:
+        return avg
+    dur = float((info.get("format") or {}).get("duration") or 0)
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+                          "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path],
+                         capture_output=True, text=True, check=True)
+    n = int((out.stdout.strip().split(",")[0] or 0))
+    return n / dur if dur > 0 and n else 0.0
+
+
+def target_fps(src_fps: float) -> int:
+    return 60 if src_fps >= HIGH_FPS_MIN else VIDEO_FPS
 
 
 def demux(src: str, out_dir) -> tuple[str | None, str]:
@@ -37,9 +68,10 @@ def demux(src: str, out_dir) -> tuple[str | None, str]:
     mp4 = None
     if "video" in streams:
         mp4 = str(out_dir / "video.mp4")
+        fps = target_fps(source_fps(src))
         # CFR so frame index = t * fps holds; keep audio so replay plays the take
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-map", "0:v:0", "-map", "0:a:0",
-                        "-vf", f"fps={VIDEO_FPS}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                        "-vf", f"fps={fps}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", mp4],
                        check=True)
     return mp4, wav
@@ -81,7 +113,7 @@ def analyze_session(session_id: str) -> None:
         _set(session_id, progress="grading")
         res = grade(ex, audio, vision, clicks, count_in)
         if vision is not None:
-            (out / "track.json").write_text(json.dumps(vision.to_json()))
+            (out / "track.json").write_text(json.dumps(vision.to_json(every=max(1, round(vision.fps / 30)))))
         (out / "notes.json").write_text(json.dumps(audio.note_events))
 
         note = coaching_note(ex["title"], res.score, res.top)
