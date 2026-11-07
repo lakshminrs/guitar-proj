@@ -457,7 +457,10 @@ def attack_order_direction(y: np.ndarray, sr: int, t: float, chord: str) -> tupl
             continue
         # rise time: first frame reaching 50% of the window max
         pts.append((i, times[int(np.argmax(e >= 0.5 * e.max()))]))
-    if len(pts) < 3:
+    # Up-strums mostly catch only the treble strings. With no B / high-E probe the bass probes'
+    # "rise" on an up-strum is just leakage from the treble attack, and their timing reads as a
+    # down-strum (eval: 69 false wrong_direction flags -> 5 on augmented synthetic takes).
+    if len(pts) < 3 or max(p[0] for p in pts) < 4:
         return None, 0.0
     idx = np.array([p[0] for p in pts], float)
     ts = np.array([p[1] for p in pts])
