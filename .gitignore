@@ -11,6 +11,7 @@ next-env.d.ts
 # local data, recordings, models (downloaded on setup)
 api/data/*
 !api/data/fretboard.yaml
+!api/data/COLLECTION.md
 api/models/
 web/public/mediapipe/
 web/public/models/

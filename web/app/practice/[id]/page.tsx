@@ -2,12 +2,16 @@
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Chord, type Exercise } from "@/lib/api";
+import { makeScript, type ScriptItem } from "@/lib/collect";
 import { COLORS, drawGrid, drawHand, fillCell, fingertipCells, label, mapper, ring, splitHands } from "@/lib/draw";
 import { CALIB_POINTS, FINGER_NAMES, homographyFromCalib, type CalibName, type Mat3, type Pt } from "@/lib/geometry";
 import { getHandLandmarker } from "@/lib/hands";
 import { Metronome } from "@/lib/metronome";
 
-type Phase = "idle" | "starting" | "live" | "countin" | "recording" | "uploading";
+type Phase = "idle" | "starting" | "live" | "countin" | "recording" | "confirm" | "uploading";
+type Take = { blob: Blob; clicks_ms: number[]; latency: number; mime: string };
+type Tags = { player: string; guitar: string; mic: string; room: string; audio: string };
+const TAGS_KEY = "gc.collect.tags.v1";
 const COUNT_IN = 4;
 const TAP_HELP: Record<CalibName, string> = {
   nut_low: "Tap the NUT on the thick (low E) string side",
@@ -35,7 +39,13 @@ export default function Practice() {
   const [calib, setCalib] = useState<Partial<Record<CalibName, Pt>>>({});
   const [tapping, setTapping] = useState(false);
   const [preview, setPreview] = useState<string>("");
-  const [hud, setHud] = useState<{ big: string; small: string } | null>(null);
+  const [hud, setHud] = useState<{ big: string; small: string; cue?: string } | null>(null);
+  // scripted-take (data collection) mode: /practice/<id>?collect=1
+  const [collect, setCollect] = useState(false);
+  const [script, setScript] = useState<ScriptItem[]>([]);
+  const [tags, setTags] = useState<Tags>({ player: "", guitar: "acoustic", mic: "laptop", room: "", audio: "speakers" });
+  const [usable, setUsable] = useState(true);
+  const [take, setTake] = useState<Take | null>(null);
   const [tips, setTips] = useState<ReturnType<typeof fingertipCells>>([]);
   const [fps, setFps] = useState(0);
 
@@ -54,6 +64,11 @@ export default function Practice() {
   useEffect(() => {
     api.exercise(Number(id)).then((e) => { setEx(e); setPreview(e.bars[0].chord); }).catch((e) => setMsg(String(e)));
     api.chords().then((cs) => setChords(Object.fromEntries(cs.map((c) => [c.name, c])))).catch(() => {});
+    setCollect(new URLSearchParams(window.location.search).get("collect") === "1");
+    try {
+      const t = localStorage.getItem(TAGS_KEY);
+      if (t) setTags((o) => ({ ...o, ...JSON.parse(t) }));
+    } catch { /* ignore */ }
     try {
       const saved = localStorage.getItem(CAL_KEY);
       if (saved) setCalib(JSON.parse(saved));
@@ -190,34 +205,72 @@ export default function Practice() {
         const chord = ex.bars[bar]?.chord ?? "";
         live.current.chord = chord;
         const next = ex.bars[bar + 1]?.chord;
-        setHud({ big: chord, small: `bar ${bar + 1}/${ex.bars.length} · beat ${(k % bpb) + 1}${next ? ` · next ${next}` : ""} · ${ex.bars[bar]?.strum_pattern}` });
+        // scripted take: warn a bar ahead, then show the instruction during its bar
+        const now = collect ? script.filter((s) => s.bar === bar + 1) : [];
+        const soon = collect ? script.filter((s) => s.bar === bar + 2) : [];
+        const cue = now.length ? `NOW · beat ${now[0].beatLabel}: ${now[0].text}`
+          : soon.length ? `NEXT BAR · beat ${soon[0].beatLabel}: ${soon[0].text}` : undefined;
+        setHud({ big: chord, small: `bar ${bar + 1}/${ex.bars.length} · beat ${(k % bpb) + 1}${next ? ` · next ${next}` : ""} · ${ex.bars[bar]?.strum_pattern}`, cue });
       }, () => window.setTimeout(() => rec.stop(), spb * 1000 + 300));
     };
     rec.onstop = async () => {
       setHud(null);
-      setPhase("uploading");
-      try {
-        const blob = new Blob(chunks, { type: (rec.mimeType || "video/webm").split(";")[0] });
-        const latency = ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000;
-        const clicks_ms = met.clickTimes.map((t) => (t - recStart) * 1000 + latency);
-        setMsg("Uploading take…");
-        const s = await api.createSession(ex.id);
-        await api.upload(s.upload_url, blob);
-        setMsg("Queued for analysis…");
-        const cal = homographyFromCalib(calib) ? { points: calib, mirrored_preview: mirror } : null;
-        await api.analyze(s.id, {
-          clicks_ms, count_in_beats: COUNT_IN, calibration: cal,
-          device: { ua: navigator.userAgent, mime: rec.mimeType, output_latency_ms: latency,
-                    video: streamRef.current?.getVideoTracks()[0]?.getSettings() },
-        });
-        router.push(`/sessions/${s.id}`);
-      } catch (e) {
-        setMsg(`Upload failed: ${e}`);
-        setPhase("live");
+      const blob = new Blob(chunks, { type: (rec.mimeType || "video/webm").split(";")[0] });
+      const latency = ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000;
+      const t: Take = { blob, latency, mime: rec.mimeType, clicks_ms: met.clickTimes.map((c) => (c - recStart) * 1000 + latency) };
+      if (collect) {            // let the player say which scripted mistakes they actually made
+        setTake(t);
+        setUsable(true);
+        setPhase("confirm");
+        return;
       }
+      submit(t);
     };
     recRef.current = { rec, met };
     rec.start(1000);
+  };
+
+  const submit = async (t: Take) => {
+    if (!ex) return;
+    setPhase("uploading");
+    try {
+      setMsg("Uploading take…");
+      const s = await api.createSession(ex.id);
+      await api.upload(s.upload_url, t.blob);
+      setMsg("Queued for analysis…");
+      const cal = homographyFromCalib(calib) ? { points: calib, mirrored_preview: mirror } : null;
+      await api.analyze(s.id, {
+        clicks_ms: t.clicks_ms, count_in_beats: COUNT_IN, calibration: cal,
+        device: { ua: navigator.userAgent, mime: t.mime, output_latency_ms: t.latency,
+                  video: streamRef.current?.getVideoTracks()[0]?.getSettings() },
+        collect: collect ? {
+          labels: script.filter((s) => s.done).map((s) => s.label),
+          script: script.map((s) => ({ bar: s.bar, beat: s.beatLabel, text: s.text, done: s.done, label: s.label })),
+          usable, tags,
+        } : undefined,
+      });
+      if (collect) {            // stay here and deal the next script: takes go much faster
+        setTake(null);
+        setScript(makeScript(ex, chords));
+        setMsg(`Saved take ${s.id.slice(0, 6)}${usable ? "" : " (marked unusable)"}. New script below.`);
+        setPhase("live");
+        return;
+      }
+      router.push(`/sessions/${s.id}`);
+    } catch (e) {
+      setMsg(`Upload failed: ${e}`);
+      setPhase(collect && take ? "confirm" : "live");
+    }
+  };
+
+  useEffect(() => {
+    if (collect && ex && Object.keys(chords).length && script.length === 0 && phase !== "confirm") setScript(makeScript(ex, chords));
+    // deal automatically only on first load; afterwards "Deal a different script" and each submit deal
+  }, [collect, ex, chords]);
+
+  const saveTags = (t: Tags) => {
+    setTags(t);
+    try { localStorage.setItem(TAGS_KEY, JSON.stringify(t)); } catch { /* ignore */ }
   };
 
   const stopEarly = () => {
@@ -249,7 +302,9 @@ export default function Practice() {
           <div className="stage">
             <video ref={videoRef} className={mirror ? "mirror" : ""} playsInline muted />
             <canvas ref={canvasRef} className={tapping ? "tap" : ""} onClick={onTap} />
-            {hud && <div className="hud"><div className="big">{hud.big}</div><div>{hud.small}</div></div>}
+            {hud && <div className="hud"><div className="big">{hud.big}</div><div>{hud.small}</div>
+              {hud.cue && <div style={{ marginTop: 6, color: hud.cue.startsWith("NOW") ? "var(--bad)" : "var(--accent)", fontWeight: 700, maxWidth: 420 }}>{hud.cue}</div>}
+            </div>}
             {tapping && nextTap && <div className="hud" style={{ top: "auto", bottom: 12 }}>{TAP_HELP[nextTap]}</div>}
             {phase === "idle" && (
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
@@ -272,6 +327,68 @@ export default function Practice() {
         </div>
 
         <aside className="grid">
+          {collect && (
+            <div className="panel" style={{ borderColor: "var(--accent)" }}>
+              <h2>Scripted take <span className="muted small">(recording data)</span></h2>
+              <div className="grid small" style={{ gridTemplateColumns: "auto 1fr", gap: "6px 8px", alignItems: "center" }}>
+                <label htmlFor="t-player">Player</label>
+                <input id="t-player" value={tags.player} placeholder="name or initials" disabled={phase !== "live" && phase !== "idle"}
+                       onChange={(e) => saveTags({ ...tags, player: e.target.value })} />
+                <label htmlFor="t-guitar">Guitar</label>
+                <select id="t-guitar" value={tags.guitar} onChange={(e) => saveTags({ ...tags, guitar: e.target.value })}>
+                  <option value="acoustic">acoustic</option><option value="electro-acoustic">electro-acoustic</option>
+                  <option value="electric">electric (amp)</option><option value="classical">classical / nylon</option>
+                </select>
+                <label htmlFor="t-mic">Device</label>
+                <select id="t-mic" value={tags.mic} onChange={(e) => saveTags({ ...tags, mic: e.target.value })}>
+                  <option value="laptop">laptop</option><option value="phone">phone</option><option value="tablet">tablet</option>
+                  <option value="webcam">external webcam / mic</option>
+                </select>
+                <label htmlFor="t-audio">Click via</label>
+                <select id="t-audio" value={tags.audio} onChange={(e) => saveTags({ ...tags, audio: e.target.value })}>
+                  <option value="speakers">speakers</option><option value="headphones">headphones</option>
+                </select>
+                <label htmlFor="t-room">Room</label>
+                <input id="t-room" value={tags.room} placeholder="e.g. bedroom, kitchen"
+                       onChange={(e) => saveTags({ ...tags, room: e.target.value })} />
+              </div>
+
+              {phase !== "confirm" && (
+                <>
+                  <h3 style={{ marginTop: 12 }}>Mistakes to make this take</h3>
+                  {script.length === 0
+                    ? <p className="small">None: <b>play it as cleanly as you can.</b></p>
+                    : <ol className="small" style={{ paddingLeft: 18, margin: 0 }}>
+                        {script.map((s) => <li key={s.id} style={{ marginBottom: 6 }}><b>Bar {s.bar}, beat {s.beatLabel}:</b> {s.text}</li>)}
+                      </ol>}
+                  <p className="muted small">Only these. Play everything else as well as you can. The cue also appears on the video a bar early.</p>
+                  <button onClick={() => ex && setScript(makeScript(ex, chords))} disabled={phase !== "live" && phase !== "idle"}>Deal a different script</button>
+                </>
+              )}
+
+              {phase === "confirm" && take && (
+                <>
+                  <h3 style={{ marginTop: 12 }}>Which of these did you actually do?</h3>
+                  {script.length === 0 && <p className="small">This was a clean take.</p>}
+                  {script.map((s) => (
+                    <label key={s.id} className="small" style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                      <input type="checkbox" checked={s.done}
+                             onChange={(e) => setScript(script.map((x) => x.id === s.id ? { ...x, done: e.target.checked } : x))} />
+                      <span><b>Bar {s.bar}, beat {s.beatLabel}:</b> {s.text}</span>
+                    </label>
+                  ))}
+                  <label className="small" style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+                    <input type="checkbox" checked={usable} onChange={(e) => setUsable(e.target.checked)} />
+                    <span>Everything else went as written. Untick if you made other mistakes, lost your place, or something interrupted.</span>
+                  </label>
+                  <div className="row">
+                    <button className="primary" onClick={() => submit(take)}>Save take</button>
+                    <button className="danger" onClick={() => { setTake(null); setPhase("live"); setMsg("Take discarded."); }}>Discard</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <div className="panel">
             <h2>Live vision</h2>
             <p className="small muted">

@@ -1,6 +1,7 @@
 """FastAPI app: exercises, sessions (signed upload, analyze), results, replay data."""
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,7 @@ from .storage import session_dir, signed_upload_url, verify_upload
 
 logging.basicConfig(level=logging.INFO)
 
+LABELS_FILE = "labels.json"
 EXT = {"video/webm": "webm", "video/mp4": "mp4", "audio/webm": "webm", "audio/wav": "wav",
        "audio/x-wav": "wav", "audio/mp4": "m4a", "video/quicktime": "mov", "audio/ogg": "ogg"}
 
@@ -53,6 +55,8 @@ class AnalyzeBody(BaseModel):
     count_in_beats: int = 4
     calibration: Calibration | None = None
     device: dict = Field(default_factory=dict)
+    # scripted take (data collection): labels the player confirmed + recording tags
+    collect: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +141,11 @@ def analyze(session_id: str, body: AnalyzeBody):
                 raise HTTPException(422, "calibration points don't form a valid fretboard")
             cal = {**body.calibration.model_dump(), "homography": H.tolist(), "mirrored": is_mirrored(H)}
         s.clicks_ms, s.count_in_beats, s.calibration, s.device = body.clicks_ms, body.count_in_beats, cal, body.device
+        if body.collect is not None:
+            (session_dir(session_id) / LABELS_FILE).write_text(json.dumps(
+                {"exercise_id": s.exercise_id, "labels": body.collect.get("labels", []),
+                 "script": body.collect.get("script", []), "usable": bool(body.collect.get("usable", True)),
+                 "tags": body.collect.get("tags", {})}, indent=1))
         s.status, s.error = "queued", None
         db.commit()
     enqueue_analysis(session_id)
@@ -188,6 +197,32 @@ def get_track(session_id: str):
     if not p.exists():
         raise HTTPException(404, "no vision track for this session")
     return Response(p.read_bytes(), media_type="application/json")
+
+
+@app.get("/api/collect/manifest")
+def collect_manifest(include_unusable: bool = False):
+    """Every scripted take as an eval manifest (see scripts/eval.py):
+    curl localhost:8000/api/collect/manifest > takes.json && python -m scripts.eval --manifest takes.json"""
+    out = []
+    with SessionLocal() as db:
+        rows = db.scalars(select(SessionRow).order_by(SessionRow.created_at)).all()
+        for s in rows:
+            p = session_dir(s.id) / LABELS_FILE
+            if not p.exists() or not s.upload_path or not s.clicks_ms:
+                continue
+            meta = json.loads(p.read_text())
+            if not meta.get("usable", True) and not include_unusable:
+                continue
+            t = meta.get("tags", {})
+            tags = {"device": t.get("mic"), "guitar": t.get("guitar"), "player": t.get("player"),
+                    "room": t.get("room"), "click_audio": t.get("audio"),
+                    "clean": str(not meta.get("labels")), "usable": str(meta.get("usable", True))}
+            out.append({"name": s.id, "file": s.upload_path, "exercise_id": s.exercise_id,
+                        "clicks_ms": s.clicks_ms, "count_in_beats": s.count_in_beats,
+                        "calibration": s.calibration, "labels": meta.get("labels", []),
+                        "script": meta.get("script", []), "created_at": s.created_at.isoformat(),
+                        "tags": {k: v for k, v in tags.items() if v}})
+    return out
 
 
 @app.get("/api/sessions/{session_id}/media/{kind}")

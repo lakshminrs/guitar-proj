@@ -29,6 +29,18 @@ export default function Home() {
           </Link>
         ))}
       </div>
+      {exs && exs.length > 0 && (
+        <div className="panel small" style={{ marginTop: 24 }}>
+          <h3>Recording test data?</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Scripted takes tell you which mistakes to make on purpose, so every recording comes with its own answer key.
+            See <code>api/data/COLLECTION.md</code>.
+          </p>
+          <div className="chips">
+            {exs.map((e) => <Link key={e.id} className="chip" href={`/practice/${e.id}?collect=1`}>{e.title}</Link>)}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

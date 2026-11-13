@@ -35,7 +35,12 @@ Phone over the LAN: the camera needs HTTPS, use `npx next dev --experimental-htt
 ```bash
 cd api && .venv/bin/python -m pytest -q          # geometry, audio grading, tracking, fusion, API e2e
 .venv/bin/python -m scripts.eval --synthetic 30  # per-error-type precision/recall
+.venv/bin/python -m scripts.eval --compare A.json B.json   # diff two saved runs (eval_results/)
 ```
+
+**Real recordings:** the scripted-take mode (`/practice/<id>?collect=1`) tells the player which mistakes to make,
+so every recording carries its own labels. How to record takes and score the grader on them is in
+[api/data/COLLECTION.md](api/data/COLLECTION.md).
 
 ## Fretboard model (milestone 3)
 
